@@ -1,58 +1,32 @@
 import time
 import shutil
 import os
-import smtplib
-import socket
-from email.message import EmailMessage
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from integrity import get_file_hash
 
-SMTP_SERVER = "xxx@xx.xx"
-SMTP_PORT = xxxx
-SMTP_USER = "xxxxxx"
-SMTP_PASS = "xxxxxx"
-ADMIN_EMAIL = "admin@HIDS.pl"
-
+# Ścieżki bezwzględne
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 TARGET = os.path.join(BASE_DIR, "target_dir")
 BACKUP = os.path.join(BASE_DIR, "backups")
 
 reference_hashes = {}
 
-def send_hids_alert(filename, status_message):
-    hostname = socket.gethostname()
-    msg = EmailMessage()
-    msg.set_content(f"ALARM HIDS\n\nHost: {hostname}\nPlik: {filename}\nStatus: {status_message}\nCzas: {time.ctime()}")
-    msg['Subject'] = f"ALERT BEZPIECZENSTWA: {hostname} - {filename}"
-    msg['From'] = f"hids@{hostname}.local"
-    msg['To'] = ADMIN_EMAIL
-
-    try:
-        with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
-            server.starttls()
-            server.login(SMTP_USER, SMTP_PASS)
-            server.send_message(msg)
-        print(f"[MAIL] Powiadomienie wyslane pomyslnie dla {filename}", flush=True)
-    except Exception as e:
-        print(f"[BLAD MAIL] Nie udalo sie wyslac powiadomienia: {e}", flush=True)
-
 def load_reference_hashes():
-    print("--- Inicjalizacja: ladowanie wzorcowych haszy ---", flush=True)
+    # flush=True wymusza natychmiastowe pojawienie się tekstu w logach systemd
+    print("--- Inicjalizacja: Ładowanie wzorcowych haszy ---", flush=True)
     if not os.path.exists(BACKUP):
-        print(f"BLAD: Folder backupu {BACKUP} nie istnieje!", flush=True)
+        print(f"BŁĄD: Folder backupu {BACKUP} nie istnieje!", flush=True)
         return
 
     for filename in os.listdir(BACKUP):
-
-
         path = os.path.join(BACKUP, filename)
         if os.path.isfile(path):
             h = get_file_hash(path)
             if h:
                 reference_hashes[filename] = h
-                print(f"  [OK] Zaladowano wzorzec: {filename}", flush=True)
-    print("--- Inicjalizacja zakonczona ---\n", flush=True)
+                print(f"  [OK] Załadowano wzorzec: {filename}", flush=True)
+    print("--- Inicjalizacja zakończona ---\n", flush=True)
 
 class MonitorHandler(FileSystemEventHandler):
     def check_and_restore(self, filename, target_path):
@@ -60,19 +34,17 @@ class MonitorHandler(FileSystemEventHandler):
         expected_hash = reference_hashes.get(filename)
 
         if current_hash == expected_hash:
-            return
+            return 
 
-        print(f"!!! ALARM: Wykryto zmiane lub brak pliku: {filename}", flush=True)
+        print(f"!!! ALARM: Wykryto zmianę lub brak pliku: {filename}", flush=True)
         backup_path = os.path.join(BACKUP, filename)
-
+        
         if os.path.exists(backup_path):
             try:
-                shutil.copy2(backup_path, target_path)
-                msg = f"Przywrocono poprawna wersje pliku: {filename}"
-                print(f"+++ {msg}", flush=True)
-                send_hids_alert(filename, msg)
+                shutil.copy(backup_path, target_path)
+                print(f"+++ Przywrócono poprawną wersję pliku: {filename}", flush=True)
             except Exception as e:
-                print(f"BLAD podczas przywracania: {e}", flush=True)
+                print(f"BŁĄD podczas przywracania: {e}", flush=True)
         else:
             print(f"xxx Brak kopii zapasowej dla: {filename}", flush=True)
 
@@ -91,15 +63,13 @@ if __name__ == "__main__":
     os.makedirs(BACKUP, exist_ok=True)
 
     load_reference_hashes()
-
-
-
+    
     event_handler = MonitorHandler()
     observer = Observer()
     observer.schedule(event_handler, TARGET, recursive=False)
+    
+    print(f"System aktywny. Obserwuję folder: {TARGET}", flush=True)
     observer.start()
-
-    print(f"[START] Monitorowanie katalogu: {TARGET}")
     try:
         while True:
             time.sleep(1)

@@ -1,0 +1,95 @@
+
+- name: Instalacja i konfiguracja HIDS
+  hosts: hids_servers
+  become: yes
+
+  tasks:
+    - name: Upewnij sie, ze SSH jest wlaczone i uruchamia sie przy starcie
+      ansible.builtin.service:
+        name: ssh
+        enabled: yes
+        state: started
+
+    - name: Upewnij sie, ze lokalny klucz SSH istnieje na Kali
+      delegate_to: localhost
+      become: no
+      openssh_keypair:
+        path: "~/.ssh/id_rsa"
+        type: rsa
+        size: 4096
+
+    - name: Dodaj klucz publiczny do autoryzowanych hostow
+      authorized_key:
+        user: kali
+        state: present
+        key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+
+    - name: Konfiguracja sudo bez hasla dla grupy sudo
+      copy:
+        dest: "/etc/sudoers.d/ansible-automation"
+        content: "%sudo ALL=(ALL) NOPASSWD:ALL"
+        mode: '0440'
+        validate: 'visudo -cf %s'
+
+    - name: Instalacja pip dla Pythona
+      apt:
+        name: python3-pip
+        update_cache: yes
+        state: present
+
+    - name: Instalacja biblioteki watchdog
+      pip:
+        name: watchdog
+        extra_args: --break-system-packages
+
+    - name: Tworzenie struktury katalogow w /opt/my_monitor
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+      with_items:
+        - /opt/my_monitor
+        - /opt/my_monitor/backups
+        - /opt/my_monitor/target_dir
+        - /opt/my_monitor/logs
+
+    - name: Kopiowanie plikow zrodlowych Pythona
+      copy:
+        src: src/
+        dest: /opt/my_monitor/
+        mode: '0644'
+
+    - name: Wgrywanie domyslnego pliku testowego
+      copy:
+        src: backups/test.txt
+        dest: "{{ item }}"
+        mode: '0644'
+      with_items:
+        - /opt/my_monitor/backups/test.txt
+        - /opt/my_monitor/target_dir/test.txt
+
+    - name: Konfiguracja uslugi systemd
+      copy:
+        dest: /etc/systemd/system/file-monitor.service
+        content: |
+          [Unit]
+          Description=Monitor Integralnosci Plikow SO2
+          After=network.target
+
+          [Service]
+          Type=simple
+          User=root
+          WorkingDirectory=/opt/my_monitor
+          ExecStart=/usr/bin/python3 /opt/my_monitor/main.py
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Przeladowanie i uruchomienie uslugi
+      systemd:
+        name: file-monitor
+        state: restarted
+        enabled: yes
+        daemon_reload: yes
+
